@@ -1,0 +1,45 @@
+# ePHPm config for the SSE container — worker mode + the shared KV bus.
+#
+# Worker mode is the only ePHPm mode that can stream SSE:
+# \Ephpm\Worker\send_response_stream() sends headers immediately and pumps
+# body chunks as they are produced. In fpm mode the SAPI buffers everything
+# and flush() is a no-op, so an SSE loop would arrive as one batch at exit.
+
+[server]
+listen        = "0.0.0.0:8080"
+document_root = "/app/public"
+
+[server.timeouts]
+# For worker-mode STREAMING responses the request timeout covers only the
+# wait for status+headers; the streamed SSE body is exempt.
+request = 300
+# A client that stops reading for this long aborts the stream and frees the
+# worker. The stream sends a keepalive comment every 15 s, well inside 60 s.
+idle = 60
+
+[php]
+mode          = "worker"
+worker_script = "worker.php"
+
+# THE sizing knob: one SSE connection parks one worker thread for its whole
+# lifetime, so worker_count is the hard cap on concurrent live viewers.
+# 16 comfortably hosts a demo; raise it for more open tabs. Each worker is a
+# tiny PHP context (this script has no framework), so memory cost is low.
+# The parked-worker constraint goes away when ePHPm's server-side SSE hub
+# lands (see the ephpm roadmap, sse-realtime).
+worker_count        = 16
+worker_max_requests = 0   # never recycle; the script leaks nothing
+worker_backlog      = 0   # derive from worker_count
+
+# The KV bus. WordPress publishes events here over RESP2 (Redis protocol);
+# the worker script reads them in-process via the native ephpm_kv_*
+# functions — in single-site mode both paths hit the same store with
+# identical key names (verified in ephpm crates/ephpm-php/src/kv_bridge.rs:
+# the SAPI functions fall back to the global store, which is what the RESP
+# listener serves).
+[kv.redis_compat]
+enabled = true
+# Bind on all interfaces so the wp container can reach it over the compose
+# network. The port is NOT published to the host. For anything beyond a demo,
+# set `password` and point the plugin's DATASTAR_LIVE_KV_PASSWORD at it.
+listen = "0.0.0.0:6379"

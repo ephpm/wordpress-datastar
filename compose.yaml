@@ -1,0 +1,95 @@
+# WordPress + Datastar live demo on ePHPm — two ePHPm containers, one KV bus.
+#
+#   podman compose up -d      # or: docker compose up -d
+#   open http://localhost:9950            (WordPress)
+#   curl -N http://localhost:9951/live/stream?post=1   (the realtime layer)
+#
+# Topology (see README.md for why two containers):
+#
+#   browser ── pages ────────────► wp   (ePHPm, fpm mode, WordPress)
+#      │                            │ raw RESP2 (fsockopen) ─┐
+#      └── SSE /live/stream ─────► sse  (ePHPm, worker mode) ◄┘
+#                                    └─ native KV store = shared event bus
+#
+# Ports: 9950 (WP) and 9951 (SSE). 8080/9090/18443 are owned by other
+# services on this host — do not remap onto them.
+
+name: wordpress-datastar
+
+services:
+  mysql:
+    image: docker.io/library/mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uwordpress", "-pwordpress"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # One-shot installer: downloads WP core, installs it, activates the classic
+  # theme and the datastar-live plugin. Talks to MySQL directly (bypasses the
+  # ePHPm proxy — see WORDPRESS_DB_HOST in wp-config.php).
+  wp-init:
+    image: docker.io/library/wordpress:cli
+    restart: "no"
+    user: "0:0"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: mysql
+    command: ["sh", "/scripts/install-wp.sh"]
+    volumes:
+      - wp-data:/app
+      - ./wp-config.php:/wp-config.php:ro
+      - ./plugins/datastar-live:/app/wp-content/plugins/datastar-live:ro
+      - ./mu-plugins:/mu-plugins:ro
+      - ./scripts:/scripts:ro
+
+  # WordPress on ePHPm in fpm (drop-in) mode. SSE cannot stream in this mode
+  # (the SAPI buffers all output; flush() is a no-op) — that is exactly why
+  # the realtime layer lives in the `sse` service instead.
+  wp:
+    image: docker.io/ephpm/ephpm:v0.5.0-php8.4
+    depends_on:
+      mysql:
+        condition: service_healthy
+      wp-init:
+        condition: service_completed_successfully
+      sse:
+        condition: service_started
+    command: ["ephpm", "serve", "--config", "/app/ephpm.toml"]
+    ports:
+      - "9950:8080"
+    environment:
+      # Base URL browsers use to reach the SSE service (host-visible port).
+      DATASTAR_LIVE_URL: http://localhost:9951
+      # Where the plugin pushes events: the SSE container's RESP listener.
+      DATASTAR_LIVE_KV_HOST: sse
+      DATASTAR_LIVE_KV_PORT: "6379"
+    volumes:
+      - wp-data:/app/wordpress
+      - ./plugins/datastar-live:/app/wordpress/wp-content/plugins/datastar-live:ro
+      - ./ephpm-wp.toml:/app/ephpm.toml:ro
+
+  # The realtime layer: ePHPm in worker mode. Its embedded KV store doubles
+  # as the WP→SSE event bus via the RESP listener on 6379 (compose network
+  # only — not published to the host).
+  sse:
+    image: docker.io/ephpm/ephpm:v0.5.0-php8.4
+    command: ["ephpm", "serve", "--config", "/app/ephpm.toml"]
+    ports:
+      - "9951:8080"
+    volumes:
+      - ./sse:/app/public:ro
+      - ./ephpm-sse.toml:/app/ephpm.toml:ro
+
+volumes:
+  mysql-data:
+  wp-data:

@@ -1,0 +1,26 @@
+# ePHPm config for the WordPress container — fpm (drop-in) mode.
+#
+# fpm mode is the proven WordPress deployment, and it is the ONLY viable one
+# here: worker mode boots one framework per worker and WordPress block-theme
+# rendering is worker-hostile; more importantly this demo does not need WP to
+# stream — the SSE service does that. fpm mode cannot stream by design (the
+# SAPI buffers all output; flush() is a no-op), which is fine for Stage 0:
+# the Datastar endpoints return a complete SSE-formatted body and exit.
+
+[server]
+listen        = "0.0.0.0:8080"
+document_root = "/app/wordpress"
+# Default fallback is already ["$uri", "$uri/", "/index.php?$query_string"],
+# i.e. nginx-style try_files — WordPress permalinks work out of the box.
+
+# DB proxy mode: WordPress's mysqli connects to 127.0.0.1:3306 inside this
+# container; ePHPm forwards to the mysql container with connection pooling.
+[db.mysql]
+url             = "mysql://wordpress:wordpress@mysql:3306/wordpress"
+listen          = "127.0.0.1:3306"
+max_connections = 20
+reset_strategy  = "always"
+
+# No [kv] section: this instance's own KV store is unused. The datastar-live
+# plugin publishes events to the SSE container's KV over RESP2 (host `sse`,
+# port 6379) — that store is the single source of truth for the live layer.
