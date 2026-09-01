@@ -1,5 +1,10 @@
 # wordpress-datastar — live WordPress on ePHPm
 
+> **Note (2026-08):** this demo was recorded against ePHPm **v0.5.0**; current
+> ePHPm is **v0.8.6**. The compose pins are kept at v0.5.0 so the validated
+> transcripts below stay reproducible. Several v0.5.0 limitations described
+> here have since shipped fixes — see "What shipped since v0.5.0" below.
+
 **Realtime comments and a live admin dashboard on stock WordPress — no Node,
 no Redis, no websocket service.** Two copies of one static binary
 ([ePHPm](https://github.com/ephpm/ephpm)) do everything: serve WordPress,
@@ -202,15 +207,25 @@ Content-Type, datastar-request`); dashboard REST route 401 for anonymous.
   Woo wasn't installed); browser-level E2E (validation above is at the
   SSE/HTTP wire level, where Datastar's behavior is deterministic).
 
-## Upgrades when ePHPm v0.5.1 ships
+## What shipped since v0.5.0
 
-- **`ephpm_kv_wait()`** — the SSE worker already feature-detects it
-  (`sse/worker.php`): push latency drops from ≤100 ms to sub-ms and idle
-  CPU to zero, no code changes needed here.
-- **Streaming brotli** (`[server.compression] streaming = "sse"`) — one
-  encoder window across the whole SSE stream turns repeated fragment
-  pushes into tiny wire deltas; enable it in `ephpm-sse.toml` when the
-  knob exists.
+Both upgrades this section originally waited on have long since shipped
+(current ePHPm is v0.8.6):
+
+- **`ephpm_kv_wait()`** — shipped. The SSE worker feature-detects it
+  (`sse/worker.php`), so pointing the `sse` service at a current image drops
+  push latency from ≤100 ms to sub-ms and idle CPU to zero, with no code
+  changes here. On the pinned v0.5.0 image it falls back to the 100 ms poll,
+  as the transcripts show.
+- **Streaming compression** — shipped, as `[server.response]
+  compression_streaming = "sse"` (not the `[server.compression] streaming`
+  knob this README originally guessed): one encoder window across the whole
+  SSE stream turns repeated fragment pushes into tiny wire deltas. Enable it
+  in `ephpm-sse.toml` when running a current image.
+
+The compose pins deliberately stay at `v0.5.0-php8.4` so the validated
+transcripts above remain reproducible against the exact binary they were
+recorded on.
 
 ## Repo layout
 
