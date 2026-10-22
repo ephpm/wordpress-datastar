@@ -102,7 +102,8 @@ final class WPDS_KV {
 		try {
 			switch ( $this->backend ) {
 				case 'ephpm':
-					return (bool) ephpm_kv_set( $key, $value, $ttl_s > 0 ? $ttl_s * 1000 : 0 );
+					// ephpm_kv_set() takes its TTL in seconds (<= 0 = no expiry).
+					return (bool) ephpm_kv_set( $key, $value, max( 0, $ttl_s ) );
 				case 'predis':
 					$ttl_s > 0 ? $this->predis->setex( $key, $ttl_s, $value ) : $this->predis->set( $key, $value );
 					return true;
